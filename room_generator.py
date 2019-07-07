@@ -5,8 +5,13 @@ from collections import namedtuple
 import functools
 
 door_infos = []
-
+option_menu_l = []
+width_l = []
+height_l = []
+position_l = []
+door_infos = []
 DoorInfo = namedtuple("DoorInfo", "side position width height")
+WindowInfo = namedtuple("WindowInfo", "side position_x position_y width height")
 
 def create_ui(window_title, apply_callback):
 	win_id = window_title + '_id' 
@@ -18,9 +23,14 @@ def create_ui(window_title, apply_callback):
 		rows  += 1
 		update_row()
 	
-	def remove_door(*pArgs):
+	def remove_door(index, *pArgs):
 		global rows
 		rows  -= 1
+		option_menu_l.pop(index)
+		width_l.pop(index)
+		height_l.pop(index)
+		position_l.pop(index)
+		door_infos.pop(index)
 		update_row()
 	
 	def apply(*pArgs):
@@ -61,16 +71,12 @@ def create_ui(window_title, apply_callback):
 		
 		global door_infos
 		door_infos = []
-		#todo save and clear lists
+
 		for i in range(len(option_menu_l)):
 			side = cmds.optionMenu(option_menu_l[i], query=True, value=True)
-			#print 'side: ' + side
 			position = cmds.floatSlider(position_l[i], query=True, value=True)
-			#print 'pos: ' + str(position)
 			width = cmds.floatField(width_l[i], query=True, value=True)
-			#print 'width: ' + str(width)
 			height = cmds.floatField(height_l[i], query=True, value=True)
-			#print 'height: ' + str(height)
 			door_infos.append(DoorInfo(side=side, position=position, width=width, height=height))
 			
 		option_menu_l = []
@@ -79,14 +85,11 @@ def create_ui(window_title, apply_callback):
 		position_l = []
 		
 		columns = 8
-		# delete the old layout and rebuild. 
-		# the 'or []` below lets you loop even if there are no children....
+		
 		for n in cmds.formLayout(form, q=True, ca=True) or []:
 			cmds.deleteUI(n)
 		cmds.setParent(form)		
 		
-		#make a new rowColumn
-		#and load values back in
 		new_row = cmds.rowColumnLayout(nc = columns)
 		for r in range(rows):
 			val = door_infos[r].side if r < len(door_infos) else 'North'
@@ -120,7 +123,7 @@ def create_ui(window_title, apply_callback):
 			val = door_infos[r].position if r < len(door_infos) else 0
 			cmds.floatSlider(position_ctr, e=True, value=val)
 			position_l.append(position_ctr)
-			cmds.button(label='X', command=remove_door)
+			cmds.button(label='X', command=functools.partial(remove_door, r))
 			
 		cmds.formLayout(form, e=True, af = [(new_row,'top',0), (new_row, 'bottom', 0 ), (new_row,  'left', 0 ), (new_row, 'right', 0)])
    
@@ -169,7 +172,7 @@ def generate_walls(volume_t, wall_mask, wall_width, door_infos, room_grp):
 	cmds.xform(room_grp, centerPivots=True)
 	
 	for info in door_infos:
-		print 'generating door: ' + str(info.side)
+		#print 'generating door: ' + str(info.side)
 		generate_door(room_grp,
 				 [p_room_x, p_room_y, p_room_z],
 				 [r_room_x, r_room_y, r_room_z],
@@ -185,7 +188,7 @@ def generate_door(room_grp, room_pos, room_rot, room_size, wall_width, door_info
 	offset = room_pos
 	wall_name = ''
 	door_offset = door_info.width + (2 * wall_width)
-	door_rot = 0
+	door_rot = [0,0,0]
 	
 	side = door_info.side
 	if side == 'North':
@@ -197,15 +200,15 @@ def generate_door(room_grp, room_pos, room_rot, room_size, wall_width, door_info
 		offset[2] = room_pos[2] - (room_size[2]*0.5) + (wall_width*0.5)
 		wall_name = filter(lambda x: 'S' in x, cmds.listRelatives(room_grp))
 	elif side == 'East':
-		offset[2] += (room_size[2] - door_offset) * 0.5 *door_info.position
+		offset[2] += (room_size[2] - door_offset) * 0.5 * door_info.position
 		offset[0] = room_pos[0] + (room_size[0] * 0.5) - (wall_width*0.5)
 		wall_name = filter(lambda x: 'E' in x, cmds.listRelatives(room_grp))
-		door_rot = 90
+		door_rot[1] = 90
 	elif side == 'West':
-		offset[2] += (room_size[2] - door_offset) * 0.5 *door_info.position
+		offset[2] += (room_size[2] - door_offset) * 0.5 * door_info.position
 		offset[0] = room_pos[0] - (room_size[0] * 0.5) + (wall_width*0.5)
 		wall_name = filter(lambda x: 'W' in x, cmds.listRelatives(room_grp))
-		door_rot = 90
+		door_rot[1] = 90
 	else:
 		print 'side was: ' + side
 		return
@@ -230,15 +233,78 @@ def generate_door(room_grp, room_pos, room_rot, room_size, wall_width, door_info
 	else:
 		wall_name_full = wall_name[0]
 	
-	door_bool = cmds.polyCube(w=door_info.width, h=door_info.height, d=1.0, name=room_grp + '_door_bool_%s_#' % (side))
-	cmds.xform(door_bool, centerPivots=True)
-	cmds.rotate(0, door_rot, 0, door_bool)
-	cmds.move(offset[0], offset[1] - (room_size[1]*0.5) + (door_info.height*0.5), offset[2], door_bool)
-	cmds.parent(door_bool, room_grp, relative=False)
-	cutted_wall = cmds.polyBoolOp(wall_name_full, door_bool[0], op=2, n=wall_name_full+ '_holed')[0]
+	cut_hole(wall_name_full, side, door_info.width, door_info.height,
+			 room_grp, room_size, door_rot, offset, wall_width)
+
+def generate_window((room_grp, room_pos, room_rot, room_size, wall_width, window_info):
+	offset = room_pos
+	wall_name = ''
+	window_offset = window_info.width + (2 * wall_width)
+	window_rot = [0,0,0]
+	
+	side = window_info.side
+
+	if side == 'Floor':
+		wall_name = filter(lambda x: 'floor' in x, cmds.listRelatives(room_grp))
+		window_rot[0] = 90
+	elif side == 'Ceiling':
+		wall_name = filter(lambda x: 'ceiling' in x, cmds.listRelatives(room_grp))
+		window_rot[0] = 90
+	elif side == 'North':
+		offset[0] += (room_size[0] - window_offset) * 0.5 * window_info.position_x
+		offset[2] = room_pos[2] + (room_size[2]*0.5) - (wall_width*0.5)
+		wall_name = filter(lambda x: 'N' in x, cmds.listRelatives(room_grp))
+	elif side == 'South':
+		offset[0] += (room_size[0] - window_offset) * 0.5 * window_info.position_x
+		offset[2] = room_pos[2] - (room_size[2]*0.5) + (wall_width*0.5)
+		wall_name = filter(lambda x: 'S' in x, cmds.listRelatives(room_grp))
+	elif side == 'East':
+		offset[2] += (room_size[2] - window_offset) * 0.5 * window_info.position_x
+		offset[0] = room_pos[0] + (room_size[0] * 0.5) - (wall_width*0.5)
+		wall_name = filter(lambda x: 'E' in x, cmds.listRelatives(room_grp))
+		window_rot[1] = 90
+	elif side == 'West':
+		offset[2] += (room_size[2] - window_offset) * 0.5 * window_info.position_x
+		offset[0] = room_pos[0] - (room_size[0] * 0.5) + (wall_width*0.5)
+		wall_name = filter(lambda x: 'W' in x, cmds.listRelatives(room_grp))
+		window_rot[1] = 90
+	else:
+		#print 'side was: ' + side
+		return
+		
+	wall_name_full = ''
+	
+	if type(wall_name) is list and len(wall_name) > 1:
+		#print str(len(wall_name))	
+		wall_name = filter(lambda x: '_holed' in x, wall_name)
+		index = 0
+		lenght = 0
+		
+		for x in range(len(wall_name)):
+			#print wall_name[x]
+			if len(wall_name[x]) > lenght:
+				index = x
+				lenght = len(wall_name[x])
+				
+		#print str(len(wall_name))		
+		#print str(index)		
+		wall_name_full = wall_name[index]
+	else:
+		wall_name_full = wall_name[0]
+	
+	cut_hole(wall_name_full, side, window_info.width, window_info.height,
+			 room_grp, room_size, window_rot, offset, wall_width)
+
+def cut_hole(wall_name_full, side, width, height, room_grp, room_size, rot, offset, wall_width):
+	hole = cmds.polyCube(w=width, h=height, d=(wall_width + 0.1), name=room_grp + '_hole_%s_#' % (side))
+	cmds.xform(hole, centerPivots=True)
+	cmds.rotate(rot[0], rot[1], rot[2], hole)
+	cmds.move(offset[0], offset[1] - (room_size[1]*0.5) + (height*0.5), offset[2], hole)
+	cmds.parent(hole, room_grp, relative=False)
+	cutted_wall = cmds.polyBoolOp(wall_name_full, hole[0], op=2, n=wall_name_full+ '_holed')[0]
 	cmds.inheritTransform(cutted_wall, off=True)
 	cmds.parent(cutted_wall, room_grp)
-	cmds.hide(door_bool)
+	cmds.hide(hole)
 	cmds.hide(wall_name_full)
 
 def apply_callback(floor_ceiling, walls, option_menu_l, width_l, height_l, position_l, d_i, *pArgs):
